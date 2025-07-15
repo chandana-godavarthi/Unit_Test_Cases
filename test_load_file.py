@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch, PropertyMock
 from pyspark.sql import SparkSession, Row
 import common
 
-
 @pytest.fixture(scope="session")
 def spark():
     return SparkSession.builder.master("local[1]").appName("pytest").getOrCreate()
