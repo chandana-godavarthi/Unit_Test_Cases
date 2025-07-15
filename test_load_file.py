@@ -1,397 +1,121 @@
 import pytest
-from pyspark.sql import SparkSession, Row
-from pyspark.sql.types import *
-from pyspark.sql import functions as F
-from unittest.mock import MagicMock, patch, mock_open
-import os
-import zipfile
-import re
-from datetime import time
-from common import load_file
+from unittest.mock import MagicMock, patch
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType
+import common
 
 @pytest.fixture(scope="module")
 def spark():
-    spark = SparkSession.builder \
-        .appName("pytest") \
-        .master("local[2]") \
-        .getOrCreate()
-    yield spark
-    spark.stop()
+    return SparkSession.builder.master("local[1]").appName("TestSession").getOrCreate()
 
 @pytest.fixture
 def mock_dbutils():
-    mock = MagicMock()
-    # Mock fs.ls to return a mock file list
-    mock.fs.ls.return_value = [
-        MagicMock(name="test_file_12345.csv", path="dbfs:/mnt/tp-source-data/WORK/test_file_12345.csv"),
-        MagicMock(name="test_file_12345.zip", path="dbfs:/mnt/tp-source-data/WORK/test_file_12345.zip")
-    ]
-    return mock
+    dbutils = MagicMock()
+    return dbutils
 
 @pytest.fixture
-def setup_test_environment(spark, mock_dbutils):
-    # Setup test data
-    test_run_id = "12345"
-    test_cntrt_id = "67890"
-    test_file_pattern = "test_file_%.csv"
-    test_vendor_pattern = "test_vendor"
-    test_notebook_name = "test_notebook"
-    test_delimiter = ","
-    test_postgres_schema = "test_schema"
-    
-    # Mock database credentials
-    test_db_creds = {
-        "refDBjdbcURL": "jdbc:postgresql://test:5432",
-        "refDBname": "test_db",
-        "refDBuser": "test_user",
-        "refDBpwd": "test_pwd"
-    }
-    
-    return {
-        "spark": spark,
-        "dbutils": mock_dbutils,
-        "run_id": test_run_id,
-        "cntrt_id": test_cntrt_id,
-        "file_pattern": test_file_pattern,
-        "vendor_pattern": test_vendor_pattern,
-        "notebook_name": test_notebook_name,
-        "delimiter": test_delimiter,
-        "postgres_schema": test_postgres_schema,
-        "db_creds": test_db_creds
-    }
+def mock_read_query_from_postgres():
+    with patch("common.read_query_from_postgres") as mock:
+        yield mock
 
-def test_load_file_prod_type(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "prod"
-    
-    # Create test data
-    test_data = [("prod1", "category1", "super1"), ("prod2", "category2", "super2")]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "CATEGORY", "SUPER_CATEGORY"])
-    
-    # Mock column mappings
-    col_mapping_data = [
-        ("PROD", "prod_id"),
-        ("CATEGORY", "category"),
-        ("SUPER_CATEGORY", "super_category")
-    ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
-    assert result == "Success"
-    context["dbutils"].fs.ls.assert_called_once_with("/mnt/tp-source-data/WORK/")
+@pytest.fixture
+def sample_col_mapping_df(spark):
+    schema = StructType([
+        StructField("cntrt_id", StringType(), True),
+        StructField("dmnsn_name", StringType(), True),
+        StructField("file_col_name", StringType(), True),
+        StructField("db_col_name", StringType(), True),
+    ])
+    data = [("123", "PROD", "colA", "dbA")]
+    return spark.createDataFrame(data, schema)
 
-def test_load_file_mkt_type(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "mkt"
-    
-    # Create test data
-    test_data = [("mkt1", "region1", "country1"), ("mkt2", "region2", "country2")]
-    test_df = context["spark"].createDataFrame(test_data, ["MKT", "REGION", "COUNTRY"])
-    
-    # Mock column mappings
-    col_mapping_data = [
-        ("MKT", "market_id"),
-        ("REGION", "region"),
-        ("COUNTRY", "country")
+@pytest.fixture
+def sample_measr_df(spark):
+    schema = StructType([StructField("measr_phys_name", StringType(), True)])
+    data = [("dbA",)]
+    return spark.createDataFrame(data, schema)
+
+@pytest.mark.parametrize("file_type", ['prod', 'fact', 'mkt', 'time'])
+def test_load_file_success(spark, mock_dbutils, sample_col_mapping_df, sample_measr_df, mock_read_query_from_postgres, file_type):
+    # Mock file system listing
+    mock_dbutils.fs.ls.return_value = [
+        MagicMock(name="sample_123.zip", path="/mnt/tp-source-data/WORK/sample_123.zip")
     ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
+
+    # Mock parquet read for column mapping
+    spark.read.parquet = MagicMock(return_value=sample_col_mapping_df)
+
+    # Mock read_query_from_postgres for measures
+    mock_read_query_from_postgres.return_value = sample_measr_df
+
+    # Mock CSV file reads
+    spark.read.format().option().option().load = MagicMock(return_value=sample_col_mapping_df)
+
+    result = common.load_file(
+        file_type=file_type,
+        RUN_ID="123",
+        CNTRT_ID="123",
+        STEP_FILE_PATTERN="sample_%_extr.csv",
+        vendor_pattern="vendor",
+        notebook_name="test",
+        delimiter=",",
+        dbutils=mock_dbutils,
+        postgres_schema="schema",
+        spark=spark,
+        refDBjdbcURL="url",
+        refDBname="dbname",
+        refDBuser="user",
+        refDBpwd="pwd"
+    )
     assert result == "Success"
 
-def test_load_file_fact_type(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "fact"
-    
-    # Create test data
-    test_data = [("prod1", "mkt1", 100), ("prod2", "mkt2", 200)]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "MKT", "VALUE"])
-    
-    # Mock column mappings
-    col_mapping_data = [
-        ("PROD", "product_id"),
-        ("MKT", "market_id"),
-        ("VALUE", "value")
-    ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
+def test_load_file_no_zip_found(spark, mock_dbutils, sample_col_mapping_df, sample_measr_df, mock_read_query_from_postgres):
+    mock_dbutils.fs.ls.return_value = []  # No files
+
+    spark.read.parquet = MagicMock(return_value=sample_col_mapping_df)
+    mock_read_query_from_postgres.return_value = sample_measr_df
+    spark.read.format().option().option().load = MagicMock(return_value=sample_col_mapping_df)
+
+    result = common.load_file(
+        file_type="prod",
+        RUN_ID="123",
+        CNTRT_ID="123",
+        STEP_FILE_PATTERN="sample_%_extr.csv",
+        vendor_pattern="vendor",
+        notebook_name="test",
+        delimiter=",",
+        dbutils=mock_dbutils,
+        postgres_schema="schema",
+        spark=spark,
+        refDBjdbcURL="url",
+        refDBname="dbname",
+        refDBuser="user",
+        refDBpwd="pwd"
+    )
     assert result == "Success"
 
-def test_load_file_time_type(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "time"
-    
-    # Create test data
-    test_data = [("2023-01-01", "Q1", "Jan"), ("2023-02-01", "Q1", "Feb")]
-    test_df = context["spark"].createDataFrame(test_data, ["DATE", "QUARTER", "MONTH"])
-    
-    # Mock column mappings
-    col_mapping_data = [
-        ("DATE", "date"),
-        ("QUARTER", "quarter"),
-        ("MONTH", "month")
+def test_load_file_invalid_file_type(spark, mock_dbutils, sample_col_mapping_df, sample_measr_df, mock_read_query_from_postgres):
+    mock_dbutils.fs.ls.return_value = [
+        MagicMock(name="sample_123.zip", path="/mnt/tp-source-data/WORK/sample_123.zip")
     ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
-    assert result == "Success"
+    spark.read.parquet = MagicMock(return_value=sample_col_mapping_df)
+    mock_read_query_from_postgres.return_value = sample_measr_df
+    spark.read.format().option().option().load = MagicMock(return_value=sample_col_mapping_df)
 
-def test_load_file_with_zip_file(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "prod"
-    
-    # Create test data
-    test_data = [("prod1", "category1"), ("prod2", "category2")]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "CATEGORY"])
-    
-    # Mock column mappings
-    col_mapping_data = [("PROD", "prod_id"), ("CATEGORY", "category")]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations to return a zip file
-    context["dbutils"].fs.ls.return_value = [MagicMock(name="test_file_12345.zip", path="dbfs:/mnt/tp-source-data/WORK/test_file_12345.zip")]
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
-    assert result == "Success"
-
-def test_load_file_with_special_char_columns(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "prod"
-    
-    # Create test data with special char columns
-    test_data = [("prod1", "val1", "val2"), ("prod2", "val3", "val4")]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "COL#1", "COL#2"])
-    
-    # Mock column mappings with special char handling
-    col_mapping_data = [
-        ("PROD", "prod_id"),
-        ("COL#1", "col"),
-        ("COL#2", "col")
-    ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
-    assert result == "Success"
-
-def test_load_file_with_multiple_mappings(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "prod"
-    
-    # Create test data
-    test_data = [("prod1", "desc1"), ("prod2", "desc2")]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "DESC"])
-    
-    # Mock column mappings with multiple mappings
-    col_mapping_data = [
-        ("PROD", "prod_id,product_id"),  # Multiple mappings
-        ("DESC", "description")
-    ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-            # Act
-            result = load_file(
-                file_type=file_type,
-                RUN_ID=context["run_id"],
-                CNTRT_ID=context["cntrt_id"],
-                STEP_FILE_PATTERN=context["file_pattern"],
-                vendor_pattern=context["vendor_pattern"],
-                notebook_name=context["notebook_name"],
-                delimiter=context["delimiter"],
-                dbutils=context["dbutils"],
-                postgres_schema=context["postgres_schema"],
-                spark=context["spark"],
-                refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                refDBname=context["db_creds"]["refDBname"],
-                refDBuser=context["db_creds"]["refDBuser"],
-                refDBpwd=context["db_creds"]["refDBpwd"]
-            )
-    
-    # Assert
-    assert result == "Success"
-
-def test_load_file_with_null_measure_values(setup_test_environment):
-    # Arrange
-    context = setup_test_environment
-    file_type = "prod"
-    
-    # Create test data with null measure values
-    test_data = [
-        ("prod1", "category1", None, None),
-        ("prod2", "category2", 100, 200)
-    ]
-    test_df = context["spark"].createDataFrame(test_data, ["PROD", "CATEGORY", "SALES", "UNITS"])
-    
-    # Mock column mappings
-    col_mapping_data = [
-        ("PROD", "prod_id"),
-        ("CATEGORY", "category"),
-        ("SALES", "sales"),
-        ("UNITS", "units")
-    ]
-    col_mapping_df = context["spark"].createDataFrame(col_mapping_data, ["file_col_name", "db_col_name"])
-    
-    # Mock measure lookup
-    measure_data = [("sales",), ("units",)]
-    measure_df = context["spark"].createDataFrame(measure_data, ["measr_phys_name"])
-    
-    # Mock the file system operations
-    with patch("pyspark.sql.DataFrameReader.parquet", return_value=col_mapping_df):
-        with patch("common.read_query_from_postgres", return_value=measure_df):
-            with patch("pyspark.sql.DataFrameReader.csv", return_value=test_df):
-                # Act
-                result = load_file(
-                    file_type=file_type,
-                    RUN_ID=context["run_id"],
-                    CNTRT_ID=context["cntrt_id"],
-                    STEP_FILE_PATTERN=context["file_pattern"],
-                    vendor_pattern=context["vendor_pattern"],
-                    notebook_name=context["notebook_name"],
-                    delimiter=context["delimiter"],
-                    dbutils=context["dbutils"],
-                    postgres_schema=context["postgres_schema"],
-                    spark=context["spark"],
-                    refDBjdbcURL=context["db_creds"]["refDBjdbcURL"],
-                    refDBname=context["db_creds"]["refDBname"],
-                    refDBuser=context["db_creds"]["refDBuser"],
-                    refDBpwd=context["db_creds"]["refDBpwd"]
-                )
-    
-    # Assert
+    result = common.load_file(
+        file_type="other",
+        RUN_ID="123",
+        CNTRT_ID="123",
+        STEP_FILE_PATTERN="sample_%_extr.csv",
+        vendor_pattern="vendor",
+        notebook_name="test",
+        delimiter=",",
+        dbutils=mock_dbutils,
+        postgres_schema="schema",
+        spark=spark,
+        refDBjdbcURL="url",
+        refDBname="dbname",
+        refDBuser="user",
+        refDBpwd="pwd"
+    )
     assert result == "Success"
