@@ -1,14 +1,25 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 from pyspark.sql import SparkSession
-
-# ✅ Import your function under test from common.py
-from common import load_file
+from pyspark.sql import Row
+import common
 
 
 @pytest.fixture(scope="session")
 def spark():
-    return SparkSession.builder.master("local[*]").appName("unit-tests").getOrCreate()
+    return SparkSession.builder.master("local[1]").appName("pytest").getOrCreate()
+
+
+@pytest.fixture
+def dummy_df(spark):
+    data = [("col1", "col2"), ("val1", "val2")]
+    columns = ["file_col_name", "db_col_name"]
+    return spark.createDataFrame([Row(file_col_name="col1", db_col_name="db_col1")])
+
+
+@pytest.fixture
+def dummy_measr_df(spark):
+    return spark.createDataFrame([Row(measr_phys_name="measr1")])
 
 
 @pytest.fixture
@@ -16,93 +27,72 @@ def mock_dbutils():
     return MagicMock()
 
 
+# Patch the read_query_from_postgres method used inside common
 @pytest.fixture
-def dummy_df(spark):
-    data = [("file_col_value1", "db_col_value1")]
-    schema = ["file_col_name", "db_col_name"]
-    return spark.createDataFrame(data, schema)
+def mock_read_query(monkeypatch, dummy_measr_df):
+    monkeypatch.setattr(common, "read_query_from_postgres", MagicMock(return_value=dummy_measr_df))
 
 
 @pytest.fixture
-def dummy_measr_df(spark):
-    data = [("measr_phys_value1",)]
-    schema = ["measr_phys_name"]
-    return spark.createDataFrame(data, schema)
-
-
-@pytest.fixture(autouse=True)
-def mock_spark_parquet(monkeypatch, dummy_df):
-    monkeypatch.setattr("pyspark.sql.DataFrameReader.parquet", lambda self, path: dummy_df)
-
-
-@pytest.fixture(autouse=True)
-def mock_spark_format(monkeypatch, dummy_df):
-    mock_format_reader = MagicMock()
-    mock_format_reader.option.return_value.load.return_value = dummy_df
-    monkeypatch.setattr("pyspark.sql.DataFrameReader.format", lambda self, fmt: mock_format_reader)
-
-
-@pytest.fixture(autouse=True)
-def mock_write_operations(monkeypatch):
+def mock_write(dummy_df, monkeypatch):
     mock_writer = MagicMock()
-    mock_writer.format.return_value.save.return_value = None
-    mock_mode = MagicMock(return_value=mock_writer)
-    monkeypatch.setattr("pyspark.sql.DataFrameWriter.mode", lambda self, mode: mock_mode)
+    dummy_df.write = MagicMock(return_value=mock_writer)
+    mock_writer.mode.return_value.format.return_value.save = MagicMock()
+    return mock_writer
 
 
-@patch('common.read_query_from_postgres')
-def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
+def setup_common_mocks(spark, mock_dbutils, dummy_df):
+    spark.read.parquet = MagicMock(return_value=dummy_df)
+    spark.read.format = MagicMock(
+        return_value=MagicMock(option=lambda *args, **kwargs: MagicMock(option=lambda *args, **kwargs: MagicMock(load=MagicMock(return_value=dummy_df))))
+    )
     mock_dbutils.fs.ls.return_value = []
-    mock_read_query.return_value = dummy_df
-
-    result = load_file("RUN123", "fact", mock_dbutils, spark)
-    assert result is None
 
 
-@patch('common.read_query_from_postgres')
-def test_load_file_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
-    mock_file = MagicMock()
-    mock_file.name = "data_RUN123.zip"
-    mock_file.path = "/mnt/tp-source-data/WORK/data_RUN123.zip"
-    mock_dbutils.fs.ls.return_value = [mock_file]
-
-    mock_read_query.return_value = dummy_df
-
-    result = load_file("RUN123", "fact", mock_dbutils, spark)
-    assert result is None
+def test_load_file_no_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
+    setup_common_mocks(spark, mock_dbutils, dummy_df)
+    result = common.load_file(
+        "mkt", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
+        mock_dbutils, "schema", spark, "url", "db", "user", "pwd"
+    )
+    assert result == "Success"
 
 
-@patch('common.read_query_from_postgres')
-def test_load_file_fact_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = []
-    mock_read_query.return_value = dummy_df
-
-    result = load_file("RUN123", "fact", mock_dbutils, spark)
-    assert result is None
-
-
-@patch('common.read_query_from_postgres')
-def test_load_file_mkt_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = []
-    mock_read_query.return_value = dummy_df
-
-    result = load_file("RUN123", "mkt", mock_dbutils, spark)
-    assert result is None
+def test_load_file_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
+    mock_dbutils.fs.ls.return_value = [MagicMock(name="data_RUN123.zip", path="/mnt/tp-source-data/WORK/data_RUN123.zip")]
+    spark.read.parquet = MagicMock(return_value=dummy_df)
+    spark.read.format = MagicMock(
+        return_value=MagicMock(option=lambda *args, **kwargs: MagicMock(option=lambda *args, **kwargs: MagicMock(load=MagicMock(return_value=dummy_df))))
+    )
+    result = common.load_file(
+        "prod", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
+        mock_dbutils, "schema", spark, "url", "db", "user", "pwd"
+    )
+    assert result == "Success"
 
 
-@patch('common.read_query_from_postgres')
-def test_load_file_time_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = []
-    mock_read_query.return_value = dummy_df
+def test_load_file_fact_type(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
+    setup_common_mocks(spark, mock_dbutils, dummy_df)
+    result = common.load_file(
+        "fact", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
+        mock_dbutils, "schema", spark, "url", "db", "user", "pwd"
+    )
+    assert result == "Success"
 
-    result = load_file("RUN123", "time", mock_dbutils, spark)
-    assert result is None
+
+def test_load_file_time_type(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
+    setup_common_mocks(spark, mock_dbutils, dummy_df)
+    result = common.load_file(
+        "time", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
+        mock_dbutils, "schema", spark, "url", "db", "user", "pwd"
+    )
+    assert result == "Success"
 
 
-@patch('common.read_query_from_postgres')
-def test_load_file_invalid_file_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = []
-    mock_read_query.return_value = dummy_df
-
-    result = load_file("RUN123", "invalid_type", mock_dbutils, spark)
-    assert result is None
+def test_load_file_invalid_type(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
+    setup_common_mocks(spark, mock_dbutils, dummy_df)
+    result = common.load_file(
+        "invalid", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
+        mock_dbutils, "schema", spark, "url", "db", "user", "pwd"
+    )
+    assert result == "Success"
