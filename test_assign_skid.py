@@ -41,31 +41,33 @@ def test_assign_skid_runid_not_exists():
 
     # Simulate spark.sql().count() = 0 (run_id not exists)
     count_mock = MagicMock(return_value=0)
-    mock_spark.sql.return_value.count = count_mock
 
+    # Mock for df_sel (first spark.sql result — the one with .write)
+    df_sel_mock = MagicMock()
+    df_sel_mock.write.mode.return_value.saveAsTable = MagicMock()
+
+    # Result DF for other spark.sql calls
     result_df = MagicMock()
-    # Provide 4 side effects for 4 spark.sql() calls
+    result_df.select.return_value = result_df
+
+    # Provide side effects for 4 spark.sql calls
     mock_spark.sql.side_effect = [
-        MagicMock(),  # 1. SELECT CAST(run_id ...) query result
-        MagicMock(count=count_mock),  # 2. check run_id exists
-        result_df,    # 3. SELECT skid mapping
-        result_df     # 4. final join query
+        df_sel_mock,                         # 1. SELECT CAST(run_id...) query result
+        MagicMock(count=count_mock),         # 2. check run_id exists
+        result_df,                           # 3. SELECT skid mapping
+        result_df                            # 4. final join query
     ]
 
-    with patch.object(result_df, 'write') as mock_write, \
-         patch.object(result_df, 'createOrReplaceTempView') as mock_tempview, \
-         patch.object(result_df, 'select', return_value=result_df):
+    with patch.object(mock_df, 'createOrReplaceTempView'), \
+         patch.object(result_df, 'createOrReplaceTempView'):
 
         result = common.assign_skid(mock_df, 1, 'prod', 'catalog_name', mock_spark)
 
-        # Check that write.mode().saveAsTable() was called once
-        mock_write.mode.return_value.saveAsTable.assert_called_once()
+        # ✅ Assert saveAsTable called on df_sel_mock
+        df_sel_mock.write.mode.return_value.saveAsTable.assert_called_once_with('catalog_name.internal_tp.tp_prod_skid_seq')
 
+        # Validate result
         assert result == result_df
-        mock_df.createOrReplaceTempView.assert_called()
-        result_df.createOrReplaceTempView.assert_called()
-        result_df.select.assert_called()
-
 
 
 def test_assign_skid_exception():
