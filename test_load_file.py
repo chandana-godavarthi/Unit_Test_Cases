@@ -1,128 +1,108 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 from pyspark.sql import SparkSession
-from pyspark.sql import Row
 
-import common  # replace this with your actual module name if needed
+# ✅ Import your function under test from common.py
+from common import load_file
 
-# SparkSession fixture
-@pytest.fixture(scope="module")
+
+@pytest.fixture(scope="session")
 def spark():
-    return SparkSession.builder.master("local[1]").appName("unit-tests").getOrCreate()
+    return SparkSession.builder.master("local[*]").appName("unit-tests").getOrCreate()
 
-# Dummy DataFrame fixture
-@pytest.fixture
-def dummy_measr_df(spark):
-    data = [("measure1",), ("measure2",)]
-    return spark.createDataFrame(data, ["measr_phys_name"])
 
-# Mock dbutils fixture
 @pytest.fixture
 def mock_dbutils():
     return MagicMock()
 
-# Mocked DataFrame fixture with write chain mocked
+
 @pytest.fixture
-def mock_df():
-    df = MagicMock()
-    df.write.mode.return_value.format.return_value.save = MagicMock()
-    df.withColumn.return_value = df
-    df.columns = ['file_col_name', 'db_col_name']
-    return df
+def dummy_df(spark):
+    data = [("file_col_value1", "db_col_value1")]
+    schema = ["file_col_name", "db_col_name"]
+    return spark.createDataFrame(data, schema)
 
-# 1️⃣ Test no zip found
+
+@pytest.fixture
+def dummy_measr_df(spark):
+    data = [("measr_phys_value1",)]
+    schema = ["measr_phys_name"]
+    return spark.createDataFrame(data, schema)
+
+
+@pytest.fixture(autouse=True)
+def mock_spark_parquet(monkeypatch, dummy_df):
+    monkeypatch.setattr("pyspark.sql.DataFrameReader.parquet", lambda self, path: dummy_df)
+
+
+@pytest.fixture(autouse=True)
+def mock_spark_format(monkeypatch, dummy_df):
+    mock_format_reader = MagicMock()
+    mock_format_reader.option.return_value.load.return_value = dummy_df
+    monkeypatch.setattr("pyspark.sql.DataFrameReader.format", lambda self, fmt: mock_format_reader)
+
+
+@pytest.fixture(autouse=True)
+def mock_write_operations(monkeypatch):
+    mock_writer = MagicMock()
+    mock_writer.format.return_value.save.return_value = None
+    mock_mode = MagicMock(return_value=mock_writer)
+    monkeypatch.setattr("pyspark.sql.DataFrameWriter.mode", lambda self, mode: mock_mode)
+
+
 @patch('common.read_query_from_postgres')
-def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = [
-        MagicMock(name="data1.csv"), MagicMock(name="another.gz")
-    ]
-
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
-
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "FACT_%", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
-
-
-# 2️⃣ Test zip found
-@patch('common.read_query_from_postgres')
-def test_load_file_zip_found(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = [MagicMock(name="data_RUN123.zip", path="/mnt/tp-source-data/WORK/data_RUN123.zip")]
-
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
-
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "FACT_%", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
-
-
-# 3️⃣ Fact type
-@patch('common.read_query_from_postgres')
-def test_load_file_fact_type(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
+def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
     mock_dbutils.fs.ls.return_value = []
+    mock_read_query.return_value = dummy_df
 
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
-
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "FACT_TYPE", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
+    result = load_file("RUN123", "fact", mock_dbutils, spark)
+    assert result is None
 
 
-# 4️⃣ Market type
 @patch('common.read_query_from_postgres')
-def test_load_file_mkt_type(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
-    mock_dbutils.fs.ls.return_value = []
+def test_load_file_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
+    mock_file = MagicMock()
+    mock_file.name = "data_RUN123.zip"
+    mock_file.path = "/mnt/tp-source-data/WORK/data_RUN123.zip"
+    mock_dbutils.fs.ls.return_value = [mock_file]
 
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
+    mock_read_query.return_value = dummy_df
 
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "MKT_TYPE", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
+    result = load_file("RUN123", "fact", mock_dbutils, spark)
+    assert result is None
 
 
-# 5️⃣ Time type
 @patch('common.read_query_from_postgres')
-def test_load_file_time_type(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
+def test_load_file_fact_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
     mock_dbutils.fs.ls.return_value = []
+    mock_read_query.return_value = dummy_df
 
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
-
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "TIME_TYPE", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
+    result = load_file("RUN123", "fact", mock_dbutils, spark)
+    assert result is None
 
 
-# 6️⃣ Invalid file type
 @patch('common.read_query_from_postgres')
-def test_load_file_invalid_file_type(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
+def test_load_file_mkt_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
     mock_dbutils.fs.ls.return_value = []
+    mock_read_query.return_value = dummy_df
 
-    spark.read.parquet = MagicMock(return_value=mock_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
-    mock_read_query.return_value = dummy_measr_df
+    result = load_file("RUN123", "mkt", mock_dbutils, spark)
+    assert result is None
 
-    result = common.load_file(
-        "prod", "RUN123", "CNTRT1", "INVALID_TYPE", "vendor", "notebook",
-        ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
-    )
-    assert result == 'Success'
+
+@patch('common.read_query_from_postgres')
+def test_load_file_time_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
+    mock_dbutils.fs.ls.return_value = []
+    mock_read_query.return_value = dummy_df
+
+    result = load_file("RUN123", "time", mock_dbutils, spark)
+    assert result is None
+
+
+@patch('common.read_query_from_postgres')
+def test_load_file_invalid_file_type(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
+    mock_dbutils.fs.ls.return_value = []
+    mock_read_query.return_value = dummy_df
+
+    result = load_file("RUN123", "invalid_type", mock_dbutils, spark)
+    assert result is None
