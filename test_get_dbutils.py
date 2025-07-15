@@ -22,7 +22,7 @@ def test_get_dbutils_with_ipython_session_and_dbutils():
     mock_ipython = MagicMock()
     mock_dbutils = MagicMock()
 
-    with patch.dict('sys.modules', {}):
+    with patch.dict('sys.modules', {'pyspark.dbutils': MagicMock()}):
         with patch("IPython.get_ipython", return_value=mock_ipython):
             mock_ipython.user_ns = {"dbutils": mock_dbutils}
             result = get_dbutils(mock_spark)
@@ -32,7 +32,8 @@ def test_get_dbutils_with_ipython_session_and_dbutils():
 def test_get_dbutils_with_no_pyspark_dbutils_and_no_ipython():
     mock_spark = MagicMock()
 
-    with patch.dict('sys.modules', {}):
+    with patch.dict('sys.modules', {'pyspark.dbutils': MagicMock()}):
         with patch("IPython.get_ipython", return_value=None):
             with pytest.raises(UnboundLocalError):
                 get_dbutils(mock_spark)
+
