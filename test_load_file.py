@@ -31,16 +31,15 @@ def dummy_measr_df(spark):
     return spark.createDataFrame(data, schema)
 
 @patch('common.read_query_from_postgres')
-def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
+def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, mock_df, dummy_measr_df):
     mock_dbutils.fs.ls.return_value = [
         MagicMock(), MagicMock()
     ]
     mock_dbutils.fs.ls.return_value[0].name = "data1.csv"
     mock_dbutils.fs.ls.return_value[1].name = "another.gz"
 
-    spark.read.parquet = MagicMock(return_value=dummy_df)
-    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=dummy_df))))
-    dummy_df.write.mode.return_value.format.return_value.save = MagicMock()
+    spark.read.parquet = MagicMock(return_value=mock_df)
+    spark.read.format = MagicMock(return_value=MagicMock(option=lambda *a, **k: MagicMock(load=MagicMock(return_value=mock_df))))
     mock_read_query.return_value = dummy_measr_df
 
     result = common.load_file(
@@ -48,6 +47,7 @@ def test_load_file_no_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, 
         ",", mock_dbutils, "schema", spark, "jdbcurl", "dbname", "user", "pwd"
     )
     assert result == 'Success'
+
 
 @patch('common.read_query_from_postgres')
 def test_load_file_zip_found(mock_read_query, spark, mock_dbutils, dummy_df, dummy_measr_df):
