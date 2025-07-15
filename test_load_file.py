@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 from pyspark.sql import SparkSession
 from pyspark.sql import Row
 import common
@@ -27,26 +27,29 @@ def mock_dbutils():
     return MagicMock()
 
 
-# Patch the read_query_from_postgres method used inside common
 @pytest.fixture
 def mock_read_query(monkeypatch, dummy_measr_df):
     monkeypatch.setattr(common, "read_query_from_postgres", MagicMock(return_value=dummy_measr_df))
 
 
-@pytest.fixture
-def mock_write(dummy_df, monkeypatch):
-    mock_writer = MagicMock()
-    dummy_df.write = MagicMock(return_value=mock_writer)
-    mock_writer.mode.return_value.format.return_value.save = MagicMock()
-    return mock_writer
-
-
 def setup_common_mocks(spark, mock_dbutils, dummy_df):
     spark.read.parquet = MagicMock(return_value=dummy_df)
     spark.read.format = MagicMock(
-        return_value=MagicMock(option=lambda *args, **kwargs: MagicMock(option=lambda *args, **kwargs: MagicMock(load=MagicMock(return_value=dummy_df))))
+        return_value=MagicMock(option=lambda *args, **kwargs:
+                               MagicMock(option=lambda *args, **kwargs:
+                                         MagicMock(load=MagicMock(return_value=dummy_df))))
     )
     mock_dbutils.fs.ls.return_value = []
+
+
+@pytest.fixture
+def mock_write(monkeypatch):
+    writer_mock = MagicMock()
+    writer_mock.mode.return_value.format.return_value.save = MagicMock()
+
+    with patch("pyspark.sql.DataFrame.write", new_callable=PropertyMock) as mock_write_prop:
+        mock_write_prop.return_value = writer_mock
+        yield writer_mock
 
 
 def test_load_file_no_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_write):
@@ -62,7 +65,9 @@ def test_load_file_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock
     mock_dbutils.fs.ls.return_value = [MagicMock(name="data_RUN123.zip", path="/mnt/tp-source-data/WORK/data_RUN123.zip")]
     spark.read.parquet = MagicMock(return_value=dummy_df)
     spark.read.format = MagicMock(
-        return_value=MagicMock(option=lambda *args, **kwargs: MagicMock(option=lambda *args, **kwargs: MagicMock(load=MagicMock(return_value=dummy_df))))
+        return_value=MagicMock(option=lambda *args, **kwargs:
+                               MagicMock(option=lambda *args, **kwargs:
+                                         MagicMock(load=MagicMock(return_value=dummy_df))))
     )
     result = common.load_file(
         "prod", "RUN123", "C123", "STEP%", "vendor", "notebook", ",",
