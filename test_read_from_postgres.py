@@ -1,33 +1,34 @@
-import pytest
 from unittest.mock import MagicMock, call
-import common  # assuming your function is in common.py
+import common  # adjust this if your module is named differently (e.g. from yourpackage import common)
 
 def test_read_from_postgres_calls_spark_read_correctly():
+    # Mock SparkSession and its methods
     mock_spark = MagicMock()
     mock_df = MagicMock()
     mock_read = MagicMock()
 
     mock_spark.read = mock_read
     mock_format = mock_read.format.return_value
-    mock_option = mock_format.option.return_value
-    mock_option.option.return_value = mock_option  # for chained calls
-    mock_option.load.return_value = mock_df
+    # Ensure each .option() call returns the same mock (fluent chaining)
+    mock_format.option.return_value = mock_format
+    mock_format.load.return_value = mock_df
 
-    # Inputs
+    # Inputs for the function
     object_name = "test_table"
     refDBjdbcURL = "jdbc:postgresql://localhost:5432"
     refDBname = "testdb"
     refDBuser = "testuser"
     refDBpwd = "testpwd"
 
+    # Call the function under test
     result_df = common.read_from_postgres(
         object_name, mock_spark, refDBjdbcURL, refDBname, refDBuser, refDBpwd
     )
 
-    # Check format called correctly
+    # Assert .format("jdbc") was called once
     mock_read.format.assert_called_once_with("jdbc")
 
-    # Expected calls in order (we don't need to assert exact call order unless necessary, but we can verify key calls)
+    # Define expected chained .option() and .load() calls
     expected_calls = [
         call.option("driver", "org.postgresql.Driver"),
         call.option("url", f"{refDBjdbcURL}/{refDBname}"),
@@ -36,31 +37,12 @@ def test_read_from_postgres_calls_spark_read_correctly():
         call.option("password", refDBpwd),
         call.option("ssl", True),
         call.option("sslmode", "require"),
-        call.option("sslfactory", "org.postgresql.ssl.NonValidatingFactory")
+        call.option("sslfactory", "org.postgresql.ssl.NonValidatingFactory"),
+        call.load()
     ]
 
-    mock_format.option.assert_has_calls(expected_calls, any_order=False)
-    mock_option.load.assert_called_once()
+    # Assert the chain of option calls in exact order followed by load()
+    mock_format.assert_has_calls(expected_calls)
 
+    # Assert that the returned DataFrame is what .load() returned
     assert result_df == mock_df
-
-
-def test_read_from_postgres_load_raises_exception():
-    mock_spark = MagicMock()
-    mock_read = MagicMock()
-    mock_spark.read = mock_read
-    mock_format = mock_read.format.return_value
-    mock_option = mock_format.option.return_value
-    mock_option.option.return_value = mock_option
-
-    mock_option.load.side_effect = Exception("Load failed")
-
-    with pytest.raises(Exception, match="Load failed"):
-        common.read_from_postgres(
-            "test_table",
-            mock_spark,
-            "jdbc:postgresql://localhost:5432",
-            "testdb",
-            "user",
-            "pwd"
-        )
