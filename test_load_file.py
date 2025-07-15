@@ -33,12 +33,17 @@ def mock_read_query(monkeypatch, dummy_measr_df):
 
 
 def setup_common_mocks(spark, mock_dbutils, dummy_df):
+    # Mock parquet reads to always return dummy_df
     spark.read.parquet = MagicMock(return_value=dummy_df)
+    
+    # Mock csv reader chain
     spark.read.format = MagicMock(
         return_value=MagicMock(option=lambda *args, **kwargs:
                                MagicMock(option=lambda *args, **kwargs:
                                          MagicMock(load=MagicMock(return_value=dummy_df))))
     )
+
+    # Mock fs.ls result
     mock_dbutils.fs.ls.return_value = []
 
 
