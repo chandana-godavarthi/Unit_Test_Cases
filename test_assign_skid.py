@@ -43,11 +43,14 @@ def test_assign_skid_runid_not_exists():
     count_mock = MagicMock(return_value=0)
     mock_spark.sql.return_value.count = count_mock
 
-    # Mock returned DataFrame
     result_df = MagicMock()
-    mock_spark.sql.side_effect = [MagicMock(),  # for run_id check query
-                                  result_df,    # for skid mapping select query
-                                  result_df]    # for final join query
+    # Provide 4 side effects for 4 spark.sql() calls
+    mock_spark.sql.side_effect = [
+        MagicMock(),  # 1. SELECT CAST(run_id ...) query result
+        MagicMock(count=count_mock),  # 2. check run_id exists
+        result_df,    # 3. SELECT skid mapping
+        result_df     # 4. final join query
+    ]
 
     with patch.object(result_df, 'write') as mock_write, \
          patch.object(result_df, 'createOrReplaceTempView') as mock_tempview, \
@@ -55,13 +58,14 @@ def test_assign_skid_runid_not_exists():
 
         result = common.assign_skid(mock_df, 1, 'prod', 'catalog_name', mock_spark)
 
-        # Check that write.mode().saveAsTable() was called
+        # Check that write.mode().saveAsTable() was called once
         mock_write.mode.return_value.saveAsTable.assert_called_once()
 
         assert result == result_df
         mock_df.createOrReplaceTempView.assert_called()
         result_df.createOrReplaceTempView.assert_called()
         result_df.select.assert_called()
+
 
 
 def test_assign_skid_exception():
