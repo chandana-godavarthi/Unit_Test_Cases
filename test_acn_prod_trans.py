@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import common  # assuming your function acn_prod_trans is in common.py
 
 
-# ✅ Mock all pyspark.sql.functions calls used in common.py
+# Mock all pyspark.sql.functions calls used in common.py
 @pytest.fixture(autouse=True)
 def mock_pyspark_functions(monkeypatch):
     monkeypatch.setattr(common, 'col', MagicMock(name="col"))
