@@ -612,7 +612,7 @@ def check_lock(RUN_ID, check_path, catalog_name, spark):
         # Wait for the lock to be released and retry
         print('Waiting for lock')
         time.sleep(30)
-        return check_lock(RUN_ID, check_path, spark)
+        return check_lock(RUN_ID, check_path, catalog_name, spark)
     
 ###############################################################################
 
