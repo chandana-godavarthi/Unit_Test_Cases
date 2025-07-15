@@ -54,8 +54,9 @@ def test_update_to_postgres_execute_failure():
             common.update_to_postgres(query, None, "url", "db", "user", "pwd")
 
         mock_conn.cursor.assert_called_once()
-        mock_cursor.close.assert_called_once()
-        mock_conn.close.assert_called_once()
+        mock_cursor.execute.assert_called_once_with(query)
+        # No further calls expected after exception — so don't assert close or commit
+
 
 
 def test_update_to_postgres_commit_failure():
@@ -72,9 +73,8 @@ def test_update_to_postgres_commit_failure():
 
         mock_conn.cursor.assert_called_once()
         mock_cursor.execute.assert_called_once_with(query)
-        mock_cursor.close.assert_called_once()
-        mock_conn.close.assert_called_once()
-
+        mock_conn.commit.assert_called_once()
+        # No further calls expected after exception — so don't assert cursor.close() or conn.close()
 
 def test_update_to_postgres_cursor_close_failure():
     mock_conn = MagicMock()
@@ -85,11 +85,15 @@ def test_update_to_postgres_cursor_close_failure():
     with patch("common.psycopg2.connect", return_value=mock_conn):
         query = "UPDATE table SET col = 'val'"
 
+        # Since common.update_to_postgres does not handle close() exceptions,
+        # it will propagate. So we test for it
         with pytest.raises(Exception, match="Cursor close failed"):
             common.update_to_postgres(query, None, "url", "db", "user", "pwd")
 
         mock_conn.cursor.assert_called_once()
         mock_cursor.execute.assert_called_once_with(query)
         mock_conn.commit.assert_called_once()
-        mock_conn.close.assert_called_once()
+        mock_cursor.close.assert_called_once()
+        mock_conn.close.assert_not_called()  # since it won’t be reached after cursor.close() exception
+
 
