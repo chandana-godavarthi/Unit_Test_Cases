@@ -1,156 +1,104 @@
 import pytest
-import types
+from unittest.mock import MagicMock, patch
 import common
+import types
+
+# Patch missing attributes into common for test context
+if not hasattr(common, "Configuration"):
+    common.Configuration = types.SimpleNamespace()
+
+if not hasattr(common, "MetaPSClient"):
+    common.MetaPSClient = types.SimpleNamespace()
 
 
-@pytest.fixture
-def setup_mocks(monkeypatch):
-    # Mock Configuration
-    mock_config_class = types.SimpleNamespace()
-    mock_config_class.load_for_default_environment_notebook = lambda dbutils: {"tables": ["mock_table"]}
+def test_cdl_publishing_success(monkeypatch):
+    mock_dbutils = MagicMock()
 
-    # Mock MetaPSClient
-    class MockMetaPSClient:
-        @staticmethod
-        def configure(config):
-            return MockMetaPSClient()
-        def get_client(self):
-            return self
-        def mode(self, publish_mode):
-            return self
-        def publish_table(self, **kwargs):
-            pass
-        def start_publishing(self):
-            pass
+    mock_config = {"tables": ["table1", "table2"]}
+    mock_meta_client = MagicMock()
 
-    # Patch into common
-    monkeypatch.setattr(common, "Configuration", mock_config_class)
-    monkeypatch.setattr(common, "MetaPSClient", MockMetaPSClient)
+    mock_publish = MagicMock()
+    mock_start = MagicMock()
 
+    # Mock Configuration.load_for_default_environment_notebook
+    monkeypatch.setattr(common.Configuration, "load_for_default_environment_notebook", lambda dbutils: mock_config)
 
-def test_cdl_publishing_success(setup_mocks):
-    mock_dbutils = object()
-    common.cdl_publishing(
-        logical_table_name="logical_table",
-        physical_table_name="physical_table",
-        unity_catalog_table_name="catalog_table",
-        partition_definition_value="2024-01-01",
-        dbutils=mock_dbutils
-    )
+    # Mock MetaPSClient.configure().get_client()
+    monkeypatch.setattr(common.MetaPSClient, "configure", lambda config: MagicMock(get_client=lambda: mock_meta_client))
+
+    mock_meta_client.mode.return_value.publish_table = mock_publish
+    mock_meta_client.start_publishing = mock_start
+
+    common.cdl_publishing("logical", "physical", "unity_catalog", "partition", mock_dbutils)
+
+    # Verify publish_table called twice (for 2 tables)
+    assert mock_publish.call_count == 2
+    mock_start.assert_called_once()
 
 
 def test_cdl_publishing_empty_tables(monkeypatch):
-    # Mock Configuration returning empty tables
-    mock_config_class = types.SimpleNamespace()
-    mock_config_class.load_for_default_environment_notebook = lambda dbutils: {"tables": []}
+    mock_dbutils = MagicMock()
 
-    class MockMetaPSClient:
-        @staticmethod
-        def configure(config):
-            return MockMetaPSClient()
-        def get_client(self):
-            return self
-        def mode(self, publish_mode):
-            return self
-        def publish_table(self, **kwargs):
-            pass
-        def start_publishing(self):
-            pass
+    mock_config = {"tables": []}
+    mock_meta_client = MagicMock()
 
-    monkeypatch.setattr(common, "Configuration", mock_config_class)
-    monkeypatch.setattr(common, "MetaPSClient", MockMetaPSClient)
+    monkeypatch.setattr(common.Configuration, "load_for_default_environment_notebook", lambda dbutils: mock_config)
+    monkeypatch.setattr(common.MetaPSClient, "configure", lambda config: MagicMock(get_client=lambda: mock_meta_client))
 
-    mock_dbutils = object()
+    mock_meta_client.mode.return_value.publish_table = MagicMock()
+    mock_meta_client.start_publishing = MagicMock()
 
-    # Should run without errors even with no tables
-    common.cdl_publishing(
-        logical_table_name="logical_table",
-        physical_table_name="physical_table",
-        unity_catalog_table_name="catalog_table",
-        partition_definition_value="2024-01-01",
-        dbutils=mock_dbutils
-    )
+    common.cdl_publishing("logical", "physical", "unity_catalog", "partition", mock_dbutils)
+
+    # No tables to publish
+    mock_meta_client.mode.return_value.publish_table.assert_not_called()
+    mock_meta_client.start_publishing.assert_called_once()
 
 
 def test_cdl_publishing_config_load_failure(monkeypatch):
-    class MockConfig:
-        @staticmethod
-        def load_for_default_environment_notebook(dbutils):
-            raise Exception("load fail")
+    mock_dbutils = MagicMock()
 
-    monkeypatch.setattr(common, "Configuration", MockConfig)
+    def raise_exception(dbutils):
+        raise Exception("load fail")
 
-    mock_dbutils = object()
+    monkeypatch.setattr(common.Configuration, "load_for_default_environment_notebook", raise_exception)
 
     with pytest.raises(Exception, match="load fail"):
-        common.cdl_publishing(
-            logical_table_name="logical_table",
-            physical_table_name="physical_table",
-            unity_catalog_table_name="catalog_table",
-            partition_definition_value="2024-01-01",
-            dbutils=mock_dbutils
-        )
+        common.cdl_publishing("logical", "physical", "unity_catalog", "partition", mock_dbutils)
 
 
 def test_cdl_publishing_publish_table_failure(monkeypatch):
-    mock_config_class = types.SimpleNamespace()
-    mock_config_class.load_for_default_environment_notebook = lambda dbutils: {"tables": ["mock_table"]}
+    mock_dbutils = MagicMock()
 
-    class MockMetaPSClient:
-        @staticmethod
-        def configure(config):
-            return MockMetaPSClient()
-        def get_client(self):
-            return self
-        def mode(self, publish_mode):
-            return self
-        def publish_table(self, **kwargs):
-            raise Exception("publish fail")
-        def start_publishing(self):
-            pass
+    mock_config = {"tables": ["table1"]}
+    mock_meta_client = MagicMock()
 
-    monkeypatch.setattr(common, "Configuration", mock_config_class)
-    monkeypatch.setattr(common, "MetaPSClient", MockMetaPSClient)
+    def raise_publish(*args, **kwargs):
+        raise Exception("publish fail")
 
-    mock_dbutils = object()
+    monkeypatch.setattr(common.Configuration, "load_for_default_environment_notebook", lambda dbutils: mock_config)
+    monkeypatch.setattr(common.MetaPSClient, "configure", lambda config: MagicMock(get_client=lambda: mock_meta_client))
+
+    mock_meta_client.mode.return_value.publish_table.side_effect = raise_publish
 
     with pytest.raises(Exception, match="publish fail"):
-        common.cdl_publishing(
-            logical_table_name="logical_table",
-            physical_table_name="physical_table",
-            unity_catalog_table_name="catalog_table",
-            partition_definition_value="2024-01-01",
-            dbutils=mock_dbutils
-        )
+        common.cdl_publishing("logical", "physical", "unity_catalog", "partition", mock_dbutils)
 
 
 def test_cdl_publishing_start_publishing_failure(monkeypatch):
-    mock_config_class = types.SimpleNamespace()
-    mock_config_class.load_for_default_environment_notebook = lambda dbutils: {"tables": ["mock_table"]}
+    mock_dbutils = MagicMock()
 
-    class MockMetaPSClient:
-        @staticmethod
-        def configure(config):
-            return MockMetaPSClient()
-        def get_client(self):
-            return self
-        def mode(self, publish_mode):
-            return self
-        def publish_table(self, **kwargs):
-            pass
-        def start_publishing(self):
-            raise Exception("start fail")
+    mock_config = {"tables": ["table1"]}
+    mock_meta_client = MagicMock()
 
-    monkeypatch.setattr(common, "Configuration", mock_config_class)
-    monkeypatch.setattr(common, "MetaPSClient", MockMetaPSClient)
+    def raise_start():
+        raise Exception("start fail")
 
-    mock_dbutils = object()
+    monkeypatch.setattr(common.Configuration, "load_for_default_environment_notebook", lambda dbutils: mock_config)
+    monkeypatch.setattr(common.MetaPSClient, "configure", lambda config: MagicMock(get_client=lambda: mock_meta_client))
+
+    mock_meta_client.mode.return_value.publish_table = MagicMock()
+    mock_meta_client.start_publishing.side_effect = raise_start
 
     with pytest.raises(Exception, match="start fail"):
-        common.cdl_publishing(
-            logical_table_name="logical_table",
-            physical_table_name="physical_table",
-            unity_catalog_table_name="catalog_table",
-            partition_definition_value="2024-01-01",
-            dbutils=mock_dbutils
-        )
+        common.cdl_publishing("logical", "physical", "unity_catalog", "partition", mock_dbutils)
