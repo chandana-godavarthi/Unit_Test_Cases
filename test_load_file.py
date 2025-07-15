@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 from pyspark.sql import SparkSession, Row
 import common
 
@@ -44,8 +44,22 @@ def mock_csv(spark, dummy_df):
 @pytest.fixture
 def mock_write(dummy_df):
     writer_mock = MagicMock()
-    dummy_df.write = writer_mock
-    writer_mock.mode.return_value.format.return_value.save = MagicMock()
+    mode_mock = MagicMock()
+    format_mock = MagicMock()
+    save_mock = MagicMock()
+
+    # Chain mocks: write.mode().format().save()
+    writer_mock.mode.return_value = mode_mock
+    mode_mock.format.return_value = format_mock
+    format_mock.save = save_mock
+
+    # Patch the 'write' property of dummy_df using patch.object + new_callable=PropertyMock
+    patcher = patch.object(type(dummy_df), 'write', new_callable=PropertyMock, return_value=writer_mock)
+    patcher.start()
+
+    yield writer_mock
+
+    patcher.stop()
 
 
 def test_load_file_no_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_parquet, mock_csv, mock_write):
