@@ -17,9 +17,13 @@ def mock_env():
 
 
 @patch("common.col", lambda x: MagicMock())
-@patch("common.when", lambda condition, value: MagicMock())
+@patch("common.F.col", lambda x: MagicMock())
+@patch("common.when", lambda c, v: MagicMock())
+@patch("common.F.when", lambda c, v: MagicMock())
 @patch("common.concat_ws", lambda sep, *cols: MagicMock())
-@patch("common.regexp_replace", lambda col, pattern, replacement: MagicMock())
+@patch("common.F.concat_ws", lambda sep, *cols: MagicMock())
+@patch("common.regexp_replace", lambda col, pat, rep: MagicMock())
+@patch("common.F.regexp_replace", lambda col, pat, rep: MagicMock())
 @patch("common.read_query_from_postgres")
 def test_load_file_success(mock_postgres, mock_env):
     mock_spark, mock_dbutils, mock_read_parquet, mock_df = mock_env
