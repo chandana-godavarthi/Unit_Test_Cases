@@ -30,21 +30,10 @@ def mock_read_query(monkeypatch, dummy_measr_df):
 
 
 @pytest.fixture
-def mock_parquet_reads(monkeypatch, dummy_df):
+def mock_parquet_reads(spark, dummy_df, monkeypatch):
     # Mock spark.read.parquet
     parquet_mock = MagicMock(return_value=dummy_df)
-    read_mock = MagicMock()
-    read_mock.parquet = parquet_mock
-
-    monkeypatch.setattr(common, "spark", MagicMock(read=read_mock))  # this works if common.spark exists
-
-    # Also patch inside the test spark session’s read
-    patcher = patch.object(SparkSession, 'read', new_callable=PropertyMock)
-    patcher.start().return_value.parquet = parquet_mock
-
-    yield
-
-    patcher.stop()
+    spark.read.parquet = parquet_mock
 
 
 @pytest.fixture
