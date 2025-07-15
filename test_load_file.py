@@ -1,17 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
-import pyspark.sql.functions as F
-from pyspark.sql import Column
 import common
-
-
-# Patch all pyspark.sql.functions requiring active SparkContext
-@pytest.fixture(autouse=True)
-def patch_spark_functions(monkeypatch):
-    monkeypatch.setattr(F, "col", lambda x: MagicMock(spec=Column))
-    monkeypatch.setattr(F, "when", lambda condition, value: MagicMock(spec=Column))
-    monkeypatch.setattr(F, "concat_ws", lambda sep, *cols: MagicMock(spec=Column))
-    monkeypatch.setattr(F, "regexp_replace", lambda col, pattern, replacement: MagicMock(spec=Column))
 
 
 @pytest.fixture
@@ -27,6 +16,10 @@ def mock_env():
     return mock_spark, mock_dbutils, mock_read_parquet, mock_df
 
 
+@patch("common.F.col", lambda x: MagicMock())
+@patch("common.F.when", lambda condition, value: MagicMock())
+@patch("common.F.concat_ws", lambda sep, *cols: MagicMock())
+@patch("common.F.regexp_replace", lambda col, pattern, replacement: MagicMock())
 @patch("common.read_query_from_postgres")
 def test_load_file_success(mock_postgres, mock_env):
     mock_spark, mock_dbutils, mock_read_parquet, mock_df = mock_env
@@ -54,6 +47,10 @@ def test_load_file_success(mock_postgres, mock_env):
     assert result == "Success"
 
 
+@patch("common.F.col", lambda x: MagicMock())
+@patch("common.F.when", lambda condition, value: MagicMock())
+@patch("common.F.concat_ws", lambda sep, *cols: MagicMock())
+@patch("common.F.regexp_replace", lambda col, pattern, replacement: MagicMock())
 @patch("common.read_query_from_postgres")
 def test_load_file_fact_type(mock_postgres, mock_env):
     mock_spark, mock_dbutils, mock_read_parquet, mock_df = mock_env
@@ -81,6 +78,10 @@ def test_load_file_fact_type(mock_postgres, mock_env):
     assert result == "Success"
 
 
+@patch("common.F.col", lambda x: MagicMock())
+@patch("common.F.when", lambda condition, value: MagicMock())
+@patch("common.F.concat_ws", lambda sep, *cols: MagicMock())
+@patch("common.F.regexp_replace", lambda col, pattern, replacement: MagicMock())
 def test_load_file_invalid_type(mock_env):
     mock_spark, mock_dbutils, mock_read_parquet, mock_df = mock_env
 
@@ -104,6 +105,10 @@ def test_load_file_invalid_type(mock_env):
     assert result == "Success"
 
 
+@patch("common.F.col", lambda x: MagicMock())
+@patch("common.F.when", lambda condition, value: MagicMock())
+@patch("common.F.concat_ws", lambda sep, *cols: MagicMock())
+@patch("common.F.regexp_replace", lambda col, pattern, replacement: MagicMock())
 @patch("common.read_query_from_postgres")
 def test_load_file_zip_file(mock_postgres, mock_env):
     mock_spark, mock_dbutils, mock_read_parquet, mock_df = mock_env
