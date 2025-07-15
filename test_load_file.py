@@ -1,7 +1,8 @@
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from pyspark.sql import SparkSession, Row
 import common
+
 
 @pytest.fixture(scope="session")
 def spark():
@@ -10,8 +11,6 @@ def spark():
 
 @pytest.fixture
 def dummy_df(spark):
-    data = [("col1", "db_col1")]
-    columns = ["file_col_name", "db_col_name"]
     return spark.createDataFrame([Row(file_col_name="col1", db_col_name="db_col1")])
 
 
@@ -31,27 +30,22 @@ def mock_read_query(monkeypatch, dummy_measr_df):
 
 
 @pytest.fixture
-def mock_parquet(monkeypatch, dummy_df):
-    # Patch spark.read.parquet in common module
-    mock_read = MagicMock()
-    mock_read.parquet.return_value = dummy_df
-    monkeypatch.setattr(common.spark.read, "parquet", mock_read.parquet)
+def mock_parquet(spark, dummy_df):
+    spark.read.parquet = MagicMock(return_value=dummy_df)
 
 
 @pytest.fixture
-def mock_csv(monkeypatch, dummy_df):
+def mock_csv(spark, dummy_df):
     mock_csv_reader = MagicMock()
     mock_csv_reader.option.return_value.option.return_value.load.return_value = dummy_df
-    monkeypatch.setattr(common.spark.read, "format", MagicMock(return_value=mock_csv_reader))
+    spark.read.format = MagicMock(return_value=mock_csv_reader)
 
 
 @pytest.fixture
-def mock_write(monkeypatch):
+def mock_write(dummy_df):
     writer_mock = MagicMock()
+    dummy_df.write = writer_mock
     writer_mock.mode.return_value.format.return_value.save = MagicMock()
-    monkeypatch.setattr(common, "write_df_mock", writer_mock)
-    monkeypatch.setattr(common, "write_df_raw_mock", writer_mock)
-    monkeypatch.setattr(common, "write_df_dvm_mock", writer_mock)
 
 
 def test_load_file_no_zip_found(spark, mock_dbutils, dummy_df, dummy_measr_df, mock_read_query, mock_parquet, mock_csv, mock_write):
