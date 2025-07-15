@@ -1,25 +1,20 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from pyspark.sql import Row
 import common
 
 
-def test_semaphore_queue_success():
+@patch("common.lit")
+@patch("common.current_timestamp")
+def test_semaphore_queue_success(mock_timestamp, mock_lit):
     mock_spark = MagicMock()
-
-    # Mock DataFrame
     mock_df = MagicMock()
 
-    # Mock createDataFrame to return our mock_df
     mock_spark.createDataFrame.return_value = mock_df
 
-    # Mock withColumn to chain
     mock_df.withColumn.side_effect = lambda *args, **kwargs: mock_df
-
-    # Mock createOrReplaceTempView
     mock_df.createOrReplaceTempView.return_value = None
 
-    # Mock write chain
     mock_write = MagicMock()
     mock_df.write = mock_write
     mock_write_format = MagicMock()
@@ -46,7 +41,9 @@ def test_semaphore_queue_success():
     assert result == expected_check_path
 
 
-def test_semaphore_queue_empty_paths():
+@patch("common.lit")
+@patch("common.current_timestamp")
+def test_semaphore_queue_empty_paths(mock_timestamp, mock_lit):
     mock_spark = MagicMock()
     mock_df = MagicMock()
     mock_spark.createDataFrame.return_value = mock_df
@@ -76,7 +73,9 @@ def test_semaphore_queue_empty_paths():
     assert result == ""
 
 
-def test_semaphore_queue_write_failure():
+@patch("common.lit")
+@patch("common.current_timestamp")
+def test_semaphore_queue_write_failure(mock_timestamp, mock_lit):
     mock_spark = MagicMock()
     mock_df = MagicMock()
     mock_spark.createDataFrame.return_value = mock_df
@@ -89,7 +88,6 @@ def test_semaphore_queue_write_failure():
     mock_write_mode = MagicMock()
     mock_write_format.mode.return_value = mock_write_mode
 
-    # Simulate write failure
     mock_write_mode.saveAsTable.side_effect = Exception("write fail")
 
     run_id = 1
