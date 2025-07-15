@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import common
 
 
-# Mock Configuration and MetaPSClient classes since they aren't implemented in common.py
+# Mock Configuration and MetaPSClient since not defined in your common.py
 class MockConfiguration:
     @staticmethod
     def load_for_default_environment_notebook(dbutils):
@@ -16,7 +16,7 @@ class MockMetaPSClient:
         pass
 
 
-# Patch these into the common module
+# Patch these into the common module namespace
 common.Configuration = MockConfiguration
 common.MetaPSClient = MockMetaPSClient
 
@@ -25,15 +25,15 @@ def test_cdl_publishing_success(monkeypatch):
     mock_dbutils = MagicMock()
     mock_config = {"tables": ["TP_WK_FCT"]}
     mock_meta_client = MagicMock()
+    mock_mode_obj = MagicMock()
 
-    # Patch Configuration.load_for_default_environment_notebook to return mock_config
+    mock_meta_client.mode.return_value = mock_mode_obj
+
     monkeypatch.setattr(
         common.Configuration,
         "load_for_default_environment_notebook",
         lambda dbutils: mock_config
     )
-
-    # Patch MetaPSClient.configure to return an object with get_client method returning mock_meta_client
     monkeypatch.setattr(
         common.MetaPSClient,
         "configure",
@@ -48,7 +48,8 @@ def test_cdl_publishing_success(monkeypatch):
         dbutils=mock_dbutils
     )
 
-    mock_meta_client.publish_table.assert_called_once()
+    mock_meta_client.mode.assert_called_once_with(publish_mode="update")
+    mock_mode_obj.publish_table.assert_called_once()
     mock_meta_client.start_publishing.assert_called_once()
 
 
@@ -62,7 +63,6 @@ def test_cdl_publishing_empty_tables(monkeypatch):
         "load_for_default_environment_notebook",
         lambda dbutils: mock_config
     )
-
     monkeypatch.setattr(
         common.MetaPSClient,
         "configure",
@@ -77,7 +77,7 @@ def test_cdl_publishing_empty_tables(monkeypatch):
         dbutils=mock_dbutils
     )
 
-    mock_meta_client.publish_table.assert_not_called()
+    mock_meta_client.mode.assert_not_called()
     mock_meta_client.start_publishing.assert_called_once()
 
 
@@ -111,8 +111,11 @@ def test_cdl_publishing_publish_table_failure(monkeypatch):
     )
 
     class MockMetaClient:
-        def publish_table(self, *args, **kwargs):
-            raise Exception("publish fail")
+        def mode(self, publish_mode):
+            class ModeObject:
+                def publish_table(self, *args, **kwargs):
+                    raise Exception("publish fail")
+            return ModeObject()
 
         def start_publishing(self):
             pass
@@ -144,8 +147,11 @@ def test_cdl_publishing_start_publishing_failure(monkeypatch):
     )
 
     class MockMetaClient:
-        def publish_table(self, *args, **kwargs):
-            pass
+        def mode(self, publish_mode):
+            class ModeObject:
+                def publish_table(self, *args, **kwargs):
+                    pass
+            return ModeObject()
 
         def start_publishing(self):
             raise Exception("start fail")
